@@ -2,11 +2,14 @@ package fr.pantheonsorbonne.miage.jms;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.StringReader;
 
 import javax.annotation.PostConstruct;
 import javax.enterprise.context.ApplicationScoped;
 import javax.inject.Inject;
 import javax.inject.Named;
+import javax.jms.BytesMessage;
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.JMSException;
@@ -14,7 +17,12 @@ import javax.jms.MessageConsumer;
 import javax.jms.MessageProducer;
 import javax.jms.Queue;
 import javax.jms.Session;
+import javax.jms.TextMessage;
+import javax.xml.bind.JAXBContext;
+import javax.xml.bind.JAXBException;
 
+import fr.pantheonsorbonne.miage.diploma.DiplomaGenerator;
+import fr.pantheonsorbonne.miage.diploma.MiageDiplomaGenerator;
 import fr.pantheonsorbonne.ufr27.miage.DiplomaInfo;
 
 @ApplicationScoped
@@ -54,31 +62,73 @@ public class PdfGeneratorMessageHandler implements Closeable {
 
 	public void consume() {
 		
-		// receive a text message from the consummer
-		// create a jaxbcontext, binding the DiplomaInfo class
-		// unmarshall the texte message body with the JaxBcontext
-		// use the handleReceivedDiplomaSpect method to generate the diploma an send it through the wire
-		
+		try {
+			// receive a text message from the consummer
+			TextMessage message = (TextMessage) diplomaRequestConsummer.receive();
+			
+			// create a jaxbcontext, binding the DiplomaInfo class
+			JAXBContext jaxbContext = JAXBContext.newInstance(DiplomaInfo.class);
+			
+			// unmarshall the texte message body with the JaxBcontext
+			DiplomaInfo diploma = (DiplomaInfo) jaxbContext.createUnmarshaller()
+					.unmarshal(new StringReader(message.getText()));
+
+			// use the handleReceivedDiplomaSpect method to generate the diploma an send it through the wire
+			handledReceivedDiplomaSpect(diploma);
+
+		} catch (JMSException | JAXBException e) {
+			System.out.println("failed to consume message ");
+		}
 	}
 
 	private void handledReceivedDiplomaSpect(DiplomaInfo diploma) {
 
-		// create a new MIageDiplomaGenerator Instance from the diploma Info
-		// get the content (inputstream ) from the generator
-		// create an array of bytes having the size of the inputstream
-		// read the inputstream data into the adday
-		// use the sendBinary sendBinaryDiploma function to send the diploma through the
-		// write
-		// close the IS
+		try {
+			
+			// create a new MIageDiplomaGenerator Instance from the diploma Info
+			DiplomaGenerator generator = new MiageDiplomaGenerator(diploma.getStudent());
+			
+			// get the content (inputstream ) from the generator
+			InputStream inputstream = generator.getContent();
+			
+			// create an array of bytes having the size of the inputstream
+			byte[] data = new byte[inputstream.available()];
+			
+			// read the inputstream data into the adday
+			inputstream.read(data);
+			
+			// use the sendBinary sendBinaryDiploma function to send the diploma through the
+			// write
+			this.sendBinaryDiploma(diploma, data);
+			
+			// close the IS
+			inputstream.close();
+			
+		} catch (IOException e) {
+			System.err.println("failed to generate Diploma");
+		}
 
 	}
 
 	public void sendBinaryDiploma(DiplomaInfo info, byte[] data) {
-		//	create a new byte message using the session object
-		// set an IntProperty on the message containing the id of the diploma
-		// write the bytes into the bytesmessage
-		// send the message through the producer
+		
+		try {
+			
+//			create a new byte message using the session object
+			BytesMessage message = this.session.createBytesMessage();
+			
+			// set an IntProperty on the message containing the id of the diploma
+			message.setIntProperty("id", info.getId());
+			
+			// write the bytes into the bytesmessage
+			message.writeBytes(data);
 
+			// send the message through the producer
+			this.diplomaFileProducer.send(message);
+
+		} catch (JMSException e) {
+			System.err.println("failed to send diploma Request");
+		}
 	}
 
 	@Override
